@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgodynamic "k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog"
 )
 
 func NewForConfig(config *rest.Config) (ensurer Ensurer, err error) {
@@ -44,6 +45,7 @@ func (c *client) Ensure(resource string, object runtime.Object) (current *unstru
 	kind := modified.GetKind()
 	client := c.resource(resource, modified)
 
+	klog.V(1).Infof("[ensurer] creating %s: %s/%s", kind, modified.GetNamespace(), modified.GetName())
 	created, createErr := client.Create(context.TODO(), modified, metav1.CreateOptions{})
 	if createErr == nil {
 		current = created
@@ -55,6 +57,8 @@ func (c *client) Ensure(resource string, object runtime.Object) (current *unstru
 		return
 	}
 
+	klog.V(1).Infof("[ensurer] getting existing %s: %s/%s",
+		kind, modified.GetNamespace(), modified.GetName())
 	original, getErr := client.Get(context.TODO(), modified.GetName(), metav1.GetOptions{})
 	if getErr != nil {
 		err = fmt.Errorf("failed to retrieve %s - %s", kind, getErr.Error())
@@ -64,11 +68,15 @@ func (c *client) Ensure(resource string, object runtime.Object) (current *unstru
 	modified.SetResourceVersion(original.GetResourceVersion())
 	modified.SetUID(original.GetUID())
 
+	klog.V(1).Infof("[ensurer] generating patch for %s: %s/%s",
+		kind, modified.GetNamespace(), modified.GetName())
 	bytes, patchErr := PatchWithUnstructured(original, modified, object)
 	if patchErr != nil {
 		err = fmt.Errorf("failed to generate patch %s - %s", kind, patchErr.Error())
 	}
 
+	klog.V(1).Infof("[ensurer] applying patch for %s: %s/%s: %s",
+		kind, modified.GetNamespace(), modified.GetName(), string(bytes[:]))
 	current, err = client.Patch(context.TODO(), modified.GetName(), types.StrategicMergePatchType, bytes, metav1.PatchOptions{})
 	return
 }
